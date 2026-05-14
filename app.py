@@ -24,7 +24,7 @@ from flask import (Flask, render_template, request, redirect,
 # ─────────────────────────────────────────────────────────────
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────────────────────
-app = Flask(__name__)
+app = Flask(__name__, template_folder='.')
 app.secret_key = secrets.token_hex(32)   # cambia esto por una cadena fija en producción
 
 UMBRAL_CORTE   = 60
