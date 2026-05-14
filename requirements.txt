@@ -1,7 +1,4 @@
 flask
-fpdf2
-pandas
 openpyxl
+fpdf2
 pillow
-numpy
-gunicorn
