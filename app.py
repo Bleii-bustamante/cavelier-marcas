@@ -96,9 +96,21 @@ def calcular_similitud(a, b):
     if a in b or b in a: ratio = max(ratio, 0.85)
     return round(ratio * 100, 2)
 
-def extraer_clases(texto):
-    if texto is None or str(texto).strip() == "": return set()
-    return set(int(x) for x in re.findall(r'\d+', str(texto)))
+def extraer_clases(campo):
+    """Convierte el texto de la columna Clases (ej: '1, 5, 35') en un set de números."""
+    if not campo: return set()
+    import re
+    # Busca todos los números en el texto
+    encontradas = re.findall(r'\d+', str(campo))
+    return {int(n) for n in encontradas}
+
+def limpiar(texto):
+    """Limpia el texto para comparar marcas."""
+    if not texto: return ""
+    import unicodedata
+    s = str(texto).upper().strip()
+    s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+    return s
 
 def clases_en_conflicto(cc, cg):
     for a in cc:
@@ -296,48 +308,87 @@ import csv
 import gc
 
 @app.route("/procesar", methods=["POST"])
-@login_requerido
+@login_required
 def procesar():
     file_c = request.files.get("archivo_clientes")
     file_g = request.files.get("archivo_gaceta")
     
     if not file_c or not file_g:
-        flash("Sube archivos en formato CSV (delimitado por comas)")
+        flash("Sube ambos archivos en formato CSV")
         return redirect(url_for("inicio"))
 
-    # 1. Guardar archivos CSV
     path_c = os.path.join(UPLOAD_FOLDER, "clientes.csv")
     path_g = os.path.join(UPLOAD_FOLDER, "gaceta.csv")
     file_c.save(path_c)
     file_g.save(path_g)
 
-def iterar_csv(path):
-    # Cambiamos encoding a 'latin-1' que es el estándar de Excel en español
-    with open(path, mode='r', encoding='latin-1') as f:
-        reader = csv.reader(f)
-        next(reader, None)  # Saltar encabezado
-        for row in reader:
-            # Si el CSV usa punto y coma (;) en lugar de coma, lo arreglamos:
-            if len(row) == 1 and ';' in row[0]:
-                row = row[0].split(';')
-                
-            if len(row) < 2 or not row[1]: continue
+    def iterar_csv(path):
+        # Usamos latin-1 para compatibilidad total con Excel en Windows
+        with open(path, mode='r', encoding='latin-1') as f:
+            # Probamos si el separador es coma o punto y coma
+            sample = f.read(1024)
+            f.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=',;')
+            reader = csv.reader(f, dialect)
             
-            marca_orig = row[1]
-            marca_limp = limpiar(marca_orig)
-            if not marca_limp: continue
-            
-            yield {
-                "Expediente_ID": row[0],
-                "Marca_Original": marca_orig,
-                "Marca_Limpia": marca_limp,
-                "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
-                "Titular": row[7] if len(row) > 7 else "",
-                "Productos_Texto": row[10] if len(row) > 10 else ""
-            }
+            next(reader, None)  # Saltar encabezado
+            for row in reader:
+                try:
+                    if len(row) < 2 or not row[1]: continue
+                    
+                    yield {
+                        "Expediente_ID": str(row[0]).strip(),
+                        "Marca_Original": str(row[1]).strip(),
+                        "Marca_Limpia": limpiar(row[1]),
+                        # Ajusta el índice [8] si tu columna de clases es otra
+                        "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
+                        "Titular": str(row[7]) if len(row) > 7 else "",
+                        "Productos": str(row[10]) if len(row) > 10 else ""
+                    }
+                except Exception as e:
+                    print(f"Error en fila: {e}")
+                    continue
 
     resultados = []
     
+    # Cruce de datos
+    for c in iterar_csv(path_c):
+        for g in iterar_csv(path_g):
+            # 1. Filtro rápido de clases
+            if clases_en_conflicto(c["Clases"], g["Clases"]):
+                # 2. Similitud de nombres
+                score = calcular_similitud(c["Marca_Limpia"], g["Marca_Limpia"])
+                
+                if score >= UMBRAL_CORTE:
+                    res_id = f"{limpiar_id(c['Expediente_ID'])}_{limpiar_id(g['Expediente_ID'])}"
+                    
+                    resultados.append({
+                        "pdf_id": res_id,
+                        "marca_cliente": c["Marca_Original"],
+                        "marca_gaceta": g["Marca_Original"],
+                        "score": score,
+                        # Guardamos info para el PDF
+                        "_full_c": {**c, "Clases": list(c["Clases"])},
+                        "_full_g": {**g, "Clases": list(g["Clases"])},
+                        "_clases_conf": list(c["Clases"] & g["Clases"])
+                    })
+        gc.collect()
+
+    if not resultados:
+        flash("No se detectaron riesgos de oposición.")
+        return redirect(url_for("inicio"))
+
+    # Guardar metadatos para la tabla de resultados
+    session["resultados_meta"] = [
+        {"pdf_id": r["pdf_id"], "marca_cliente": r["marca_cliente"], 
+         "marca_gaceta": r["marca_gaceta"], "score": r["score"]} 
+        for r in resultados
+    ]
+    
+    with open("datos_sesion.json", "w", encoding="utf-8") as f:
+        json.dump(resultados, f, ensure_ascii=False)
+
+    return redirect(url_for("resultados"))    
     # 2. PROCESAMIENTO LÍNEA A LÍNEA
     for c in iterar_csv(path_c):
         clases_c = c["Clases"]
