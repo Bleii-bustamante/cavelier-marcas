@@ -1,0 +1,7 @@
+flask
+fpdf2
+pandas
+openpyxl
+pillow
+numpy
+gunicorn
