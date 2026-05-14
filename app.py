@@ -311,27 +311,30 @@ def procesar():
     file_c.save(path_c)
     file_g.save(path_g)
 
-    def iterar_csv(path):
-        """Lee el CSV línea por línea. Consumo de RAM: Cercano a 0"""
-        with open(path, mode='r', encoding='utf-8-sig') as f:
-            reader = csv.reader(f)
-            next(reader, None)  # Saltar encabezado
-            for row in reader:
-                if len(row) < 2 or not row[1]: continue
-                marca_orig = row[1]
-                marca_limp = limpiar(marca_orig)
-                if not marca_limp: continue
+def iterar_csv(path):
+    # Cambiamos encoding a 'latin-1' que es el estándar de Excel en español
+    with open(path, mode='r', encoding='latin-1') as f:
+        reader = csv.reader(f)
+        next(reader, None)  # Saltar encabezado
+        for row in reader:
+            # Si el CSV usa punto y coma (;) en lugar de coma, lo arreglamos:
+            if len(row) == 1 and ';' in row[0]:
+                row = row[0].split(';')
                 
-                # Adaptar índices según tus columnas del CSV:
-                # 0: ID, 1: Marca, 7: Titular, 8: Clases, 10: Productos
-                yield {
-                    "Expediente_ID": row[0],
-                    "Marca_Original": marca_orig,
-                    "Marca_Limpia": marca_limp,
-                    "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
-                    "Titular": row[7] if len(row) > 7 else "",
-                    "Productos_Texto": row[10] if len(row) > 10 else ""
-                }
+            if len(row) < 2 or not row[1]: continue
+            
+            marca_orig = row[1]
+            marca_limp = limpiar(marca_orig)
+            if not marca_limp: continue
+            
+            yield {
+                "Expediente_ID": row[0],
+                "Marca_Original": marca_orig,
+                "Marca_Limpia": marca_limp,
+                "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
+                "Titular": row[7] if len(row) > 7 else "",
+                "Productos_Texto": row[10] if len(row) > 10 else ""
+            }
 
     resultados = []
     
