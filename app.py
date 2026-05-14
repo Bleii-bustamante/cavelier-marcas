@@ -390,4 +390,7 @@ def descargar_excel():
     return send_file(buf, as_attachment=True, download_name="Reporte.xlsx")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Render asigna un puerto dinámico, lo capturamos con os.environ
+    port = int(os.environ.get("PORT", 5000))
+    # Importante: host="0.0.0.0" para que sea visible externamente
+    app.run(host="0.0.0.0", port=port, debug=False)
