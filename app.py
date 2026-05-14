@@ -292,6 +292,7 @@ import gc # Importante para liberar RAM manualmente
 
 # ... (Manten tus imports y utilidades de limpieza)
 
+import csv
 import gc
 
 @app.route("/procesar", methods=["POST"])
@@ -301,42 +302,78 @@ def procesar():
     file_g = request.files.get("archivo_gaceta")
     
     if not file_c or not file_g:
-        flash("Faltan archivos")
+        flash("Sube archivos en formato CSV (delimitado por comas)")
         return redirect(url_for("inicio"))
 
-    # 1. Limpiar carpetas
-    for folder in [CARPETA_IMG, PDF_FOLDER]:
-        for f in os.listdir(folder):
-            try: os.remove(os.path.join(folder, f))
-            except: pass
-
-    # Guardar archivos temporalmente en disco para leerlos fila por fila
-    path_c = os.path.join(UPLOAD_FOLDER, "clientes.xlsx")
-    path_g = os.path.join(UPLOAD_FOLDER, "gaceta.xlsx")
+    # 1. Guardar archivos CSV
+    path_c = os.path.join(UPLOAD_FOLDER, "clientes.csv")
+    path_g = os.path.join(UPLOAD_FOLDER, "gaceta.csv")
     file_c.save(path_c)
     file_g.save(path_g)
 
-    def iterar_excel(path):
-        """Generador que lee el excel fila por fila sin cargar todo a RAM"""
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        sheet = wb.active
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not row or len(row) < 2 or not row[1]: continue
-            marca_orig = str(row[1])
-            marca_limp = limpiar(marca_orig)
-            if not marca_limp: continue
-            
-            yield {
-                "Expediente_ID": str(row[0]),
-                "Marca_Original": marca_orig,
-                "Marca_Limpia": marca_limp,
-                "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
-                "Titular": str(row[7]) if len(row) > 7 else "",
-                "Productos_Texto": str(row[10]) if len(row) > 10 else ""
-            }
-        wb.close()
+    def iterar_csv(path):
+        """Lee el CSV línea por línea. Consumo de RAM: Cercano a 0"""
+        with open(path, mode='r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            next(reader, None)  # Saltar encabezado
+            for row in reader:
+                if len(row) < 2 or not row[1]: continue
+                marca_orig = row[1]
+                marca_limp = limpiar(marca_orig)
+                if not marca_limp: continue
+                
+                # Adaptar índices según tus columnas del CSV:
+                # 0: ID, 1: Marca, 7: Titular, 8: Clases, 10: Productos
+                yield {
+                    "Expediente_ID": row[0],
+                    "Marca_Original": marca_orig,
+                    "Marca_Limpia": marca_limp,
+                    "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
+                    "Titular": row[7] if len(row) > 7 else "",
+                    "Productos_Texto": row[10] if len(row) > 10 else ""
+                }
 
     resultados = []
+    
+    # 2. PROCESAMIENTO LÍNEA A LÍNEA
+    for c in iterar_csv(path_c):
+        clases_c = c["Clases"]
+        m_c = c["Marca_Limpia"]
+
+        for g in iterar_csv(path_g):
+            if clases_en_conflicto(clases_c, g["Clases"]):
+                score = calcular_similitud(m_c, g["Marca_Limpia"])
+                
+                if score >= UMBRAL_CORTE:
+                    p_id = f"{limpiar_id(c['Marca_Original'])}_vs_{limpiar_id(g['Marca_Original'])}"
+                    resultados.append({
+                        "pdf_id": p_id,
+                        "marca_cliente": c["Marca_Original"],
+                        "score": score,
+                        "marca_gaceta": g["Marca_Original"],
+                        "_full_c": {k: (list(v) if isinstance(v, set) else v) for k, v in c.items()},
+                        "_full_g": {k: (list(v) if isinstance(v, set) else v) for k, v in g.items()},
+                        "_clases_conf": list(calcular_clases_conflicto(clases_c, g["Clases"]))
+                    })
+        gc.collect()
+
+    # NOTA: Los logos no se pueden extraer de un CSV. 
+    # El PDF saldrá sin imagen, pero el sistema NO colapsará.
+
+    if not resultados:
+        flash("No se encontraron conflictos.")
+        return redirect(url_for("inicio"))
+
+    session["resultados_meta"] = [
+        {"pdf_id": r["pdf_id"], "marca_cliente": r["marca_cliente"], 
+         "score": r["score"], "marca_gaceta": r["marca_gaceta"]} 
+        for r in resultados
+    ]
+    
+    with open("datos_sesion.json", "w", encoding="utf-8") as f:
+        json.dump(resultados, f, ensure_ascii=False)
+
+    return redirect(url_for("resultados"))
     
     # 2. PROCESAMIENTO SECUENCIAL (MARCA POR MARCA)
     # Leemos clientes uno por uno
