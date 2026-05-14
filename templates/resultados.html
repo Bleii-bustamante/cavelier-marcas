@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cavelier — Resultados</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f4f6fb; color: #1a2a4a; }
+    nav {
+      background: #1a2a4a; color: #fff;
+      padding: 0 32px; height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    nav .brand { font-size: 18px; letter-spacing: 3px; font-weight: 700; }
+    nav .brand span { font-size: 10px; letter-spacing: 4px; color: #c9a84c;
+                      display: block; font-weight: 400; }
+    nav .user { font-size: 13px; color: #c9a84c; }
+    nav a { color: #aaa; font-size: 12px; text-decoration: none; margin-left: 16px; }
+    nav a:hover { color: #fff; }
+
+    .container { max-width: 1100px; margin: 36px auto; padding: 0 24px; }
+    .top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .top-bar h2 { font-size: 22px; }
+    .top-bar p  { font-size: 13px; color: #7f8c9a; margin-top: 2px; }
+
+    .btn-excel {
+      background: #27ae60; color: #fff; border: none;
+      padding: 10px 20px; border-radius: 7px; font-size: 14px;
+      font-weight: 600; cursor: pointer; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn-excel:hover { background: #219150; }
+    .btn-nuevo {
+      background: #1a2a4a; color: #fff; border: none;
+      padding: 10px 20px; border-radius: 7px; font-size: 14px;
+      font-weight: 600; cursor: pointer; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 8px; margin-left: 10px;
+    }
+    .btn-nuevo:hover { background: #2c3e6b; }
+
+    /* Tabla */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: #fff;
+            border-radius: 10px; overflow: hidden;
+            box-shadow: 0 2px 16px rgba(26,42,74,0.07); }
+    thead tr { background: #1a2a4a; color: #fff; }
+    thead th { padding: 13px 14px; font-size: 12px; text-align: left;
+               font-weight: 600; letter-spacing: .5px; white-space: nowrap; }
+    tbody tr { border-bottom: 1px solid #f0f2f7; transition: background .15s; }
+    tbody tr:hover { background: #f8f9fd; }
+    tbody td { padding: 12px 14px; font-size: 13px; vertical-align: top; }
+    .badge {
+      display: inline-block; padding: 3px 9px; border-radius: 20px;
+      font-size: 12px; font-weight: 700;
+    }
+    .badge-red    { background: #fdecea; color: #c0392b; }
+    .badge-yellow { background: #fef9ec; color: #b7770d; }
+    .badge-green  { background: #edfaf3; color: #1e8449; }
+    .marca { font-weight: 600; font-size: 14px; }
+    .exp   { font-size: 11px; color: #7f8c9a; }
+
+    /* Concepto */
+    .concepto-area {
+      width: 100%; min-height: 70px; padding: 8px 10px;
+      border: 1.5px solid #e0e4ea; border-radius: 6px;
+      font-size: 12px; font-family: inherit; resize: vertical;
+      transition: border-color .2s;
+    }
+    .concepto-area:focus { outline: none; border-color: #1a2a4a; }
+    .btn-guardar {
+      margin-top: 6px; padding: 6px 14px;
+      background: #1a2a4a; color: #fff; border: none;
+      border-radius: 5px; font-size: 12px; cursor: pointer;
+      font-weight: 600; transition: background .2s;
+    }
+    .btn-guardar:hover { background: #2c3e6b; }
+    .btn-guardar:disabled { background: #aaa; cursor: not-allowed; }
+    .save-msg { font-size: 11px; color: #27ae60; margin-left: 8px; display: none; }
+    .save-err  { font-size: 11px; color: #c0392b; margin-left: 8px; display: none; }
+
+    /* PDF */
+    .btn-pdf {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px; background: #f0f4ff; color: #1a2a4a;
+      border: 1.5px solid #c8d4f0; border-radius: 6px; font-size: 12px;
+      font-weight: 600; text-decoration: none; white-space: nowrap;
+      transition: background .2s;
+    }
+    .btn-pdf:hover { background: #dde6ff; }
+
+    .empty { text-align: center; padding: 60px; color: #7f8c9a; font-size: 15px; }
+  </style>
+</head>
+<body>
+<nav>
+  <div class="brand">CAVELIER <span>ABOGADOS</span></div>
+  <div>
+    <span class="user">👤 {{ usuario }}</span>
+    <a href="/inicio">Nueva búsqueda</a>
+    <a href="/logout">Cerrar sesión</a>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="top-bar">
+    <div>
+      <h2>Resultados del Análisis</h2>
+      <p>{{ resultados|length }} par{% if resultados|length != 1 %}es{% endif %} de marcas en conflicto encontrado{% if resultados|length != 1 %}s{% endif %}</p>
+    </div>
+    <div>
+      <a class="btn-excel" href="/descargar_excel">📊 Descargar Excel</a>
+      <a class="btn-nuevo" href="/inicio">🔄 Nueva búsqueda</a>
+    </div>
+  </div>
+
+  {% if resultados %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Marca Cliente</th>
+          <th>Marca Gaceta</th>
+          <th>Similitud</th>
+          <th>Concepto Jurídico</th>
+          <th>PDF</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in resultados %}
+        <tr id="fila-{{ loop.index }}">
+          <td style="color:#aaa;font-size:12px;">{{ loop.index }}</td>
+          <td>
+            <div class="marca">{{ r.marca_cliente }}</div>
+            <div class="exp">Exp: {{ r.exp_cliente }}</div>
+            <div class="exp" style="margin-top:2px;">{{ r.titular_cliente }}</div>
+            <div class="exp" style="color:#1a2a4a;margin-top:2px;">Clases: {{ r.clases_c }}</div>
+          </td>
+          <td>
+            <div class="marca">{{ r.marca_gaceta }}</div>
+            <div class="exp">Exp: {{ r.exp_gaceta }}</div>
+            <div class="exp" style="margin-top:2px;">{{ r.titular_gaceta }}</div>
+            <div class="exp" style="color:#1a2a4a;margin-top:2px;">Clases: {{ r.clases_g }}</div>
+          </td>
+          <td>
+            <span class="badge {% if r.score >= 80 %}badge-red{% elif r.score >= 70 %}badge-yellow{% else %}badge-green{% endif %}">
+              {{ r.score }}%
+            </span>
+          </td>
+          <td style="min-width:260px;">
+            <textarea class="concepto-area"
+                      id="concepto-{{ r.pdf_id }}"
+                      placeholder="Escribe aquí el concepto jurídico para este par de marcas...">{{ r.concepto }}</textarea>
+            <br>
+            <button class="btn-guardar"
+                    onclick="guardarConcepto('{{ r.pdf_id }}', this)">
+              💾 Guardar y actualizar PDF
+            </button>
+            <span class="save-msg" id="msg-{{ r.pdf_id }}">✅ Guardado</span>
+            <span class="save-err" id="err-{{ r.pdf_id }}">❌ Error</span>
+          </td>
+          <td>
+            <a class="btn-pdf" href="/descargar_pdf/{{ r.pdf_id }}">
+              📄 Descargar PDF
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">No hay resultados disponibles. <a href="/inicio">Realiza una nueva búsqueda.</a></div>
+  {% endif %}
+</div>
+
+<script>
+async function guardarConcepto(pdfId, btn) {
+  const concepto = document.getElementById('concepto-' + pdfId).value.trim();
+  const msgOk  = document.getElementById('msg-' + pdfId);
+  const msgErr = document.getElementById('err-' + pdfId);
+  msgOk.style.display = 'none';
+  msgErr.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = '⏳ Guardando...';
+
+  try {
+    const resp = await fetch('/guardar_concepto', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdf_id: pdfId, concepto: concepto })
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      msgOk.style.display = 'inline';
+      setTimeout(() => msgOk.style.display = 'none', 3000);
+    } else {
+      msgErr.textContent = '❌ ' + data.msg;
+      msgErr.style.display = 'inline';
+    }
+  } catch(e) {
+    msgErr.textContent = '❌ Error de conexión';
+    msgErr.style.display = 'inline';
+  }
+  btn.disabled = false;
+  btn.textContent = '💾 Guardar y actualizar PDF';
+}
+</script>
+</body>
+</html>
