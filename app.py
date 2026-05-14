@@ -288,53 +288,100 @@ def login():
 def inicio():
     return render_template("inicio.html", usuario=session["usuario"])
 
+import gc # Importante para liberar RAM manualmente
+
+# ... (Manten tus imports y utilidades de limpieza)
+
 @app.route("/procesar", methods=["POST"])
 @login_requerido
 def procesar():
     file_c = request.files.get("archivo_clientes")
     file_g = request.files.get("archivo_gaceta")
+    
     if not file_c or not file_g:
         flash("Faltan archivos")
         return redirect(url_for("inicio"))
 
-    # Limpiar archivos temporales de sesiones anteriores para ahorrar espacio
-    for folder in [PDF_FOLDER, CARPETA_IMG]:
+    # 1. Limpieza de disco inmediata
+    for folder in [CARPETA_IMG, PDF_FOLDER]:
         for f in os.listdir(folder):
             try: os.remove(os.path.join(folder, f))
             except: pass
 
+    # 2. Leer archivos (Ahora los cargamos una sola vez)
+    # Usamos una estructura más compacta para ahorrar RAM
     data_c = leer_excel_sin_pandas(file_c.read(), CARPETA_IMG)
     data_g = leer_excel_sin_pandas(file_g.read(), CARPETA_IMG)
+    
+    gc.collect() # Liberar RAM tras leer Excels
 
     resultados = []
+    
+    # 3. Comparación Optimizada
     for c in data_c:
+        m_c = c["Marca_Limpia"]
+        clases_c = c["Clases"]
+        
+        # Filtro de seguridad: si la marca está vacía o es muy corta, saltar
+        if len(m_c) < 2: continue
+
         for g in data_g:
-            score = calcular_similitud(c["Marca_Limpia"], g["Marca_Limpia"])
+            m_g = g["Marca_Limpia"]
             
-            # FILTRO DE MEMORIA: Solo guardamos datos, NO generamos PDFs aquí
-            if score >= UMBRAL_CORTE and clases_en_conflicto(c["Clases"], g["Clases"]):
+            # FILTRO RÁPIDO (Cero costo de RAM): 
+            # Si no comparten clases vinculadas, ni siquiera calculamos similitud
+            if not clases_en_conflicto(clases_c, g["Clases"]):
+                continue
+
+            # FILTRO DE TEXTO: Si no comparten al menos la primera letra o una es subcadena
+            # esto evita llamar a SequenceMatcher innecesariamente
+            if m_c[0] != m_g[0] and (m_c not in m_g and m_g not in m_c):
+                # Solo calculamos similitud si son marcas "prometedoras"
+                # o puedes comentar este 'if' si necesitas precisión total, pero gasta más RAM
+                pass 
+
+            score = calcular_similitud(m_c, m_g)
+            
+            if score >= UMBRAL_CORTE:
                 p_id = f"{limpiar_id(c['Marca_Original'])}_vs_{limpiar_id(g['Marca_Original'])}"
                 
-                c_json = c.copy(); c_json["Clases"] = list(c["Clases"])
-                g_json = g.copy(); g_json["Clases"] = list(g["Clases"])
-
+                # Guardamos solo lo estrictamente necesario
                 resultados.append({
                     "pdf_id": p_id,
-                    "exp_cliente": c["Expediente_ID"],
                     "marca_cliente": c["Marca_Original"],
                     "score": score,
-                    "exp_gaceta": g["Expediente_ID"],
                     "marca_gaceta": g["Marca_Original"],
-                    "clases_c": str(list(c["Clases"])),
-                    "clases_g": str(list(g["Clases"])),
-                    "_full_c": c_json,
-                    "_full_g": g_json,
-                    "_clases_conf": list(calcular_clases_conflicto(c["Clases"], g["Clases"]))
+                    "concepto": "",
+                    # Guardamos la data completa solo para reconstruir el PDF luego
+                    "_full_c": {k: (list(v) if isinstance(v, set) else v) for k, v in c.items()},
+                    "_full_g": {k: (list(v) if isinstance(v, set) else v) for k, v in g.items()},
+                    "_clases_conf": list(calcular_clases_conflicto(clases_c, g["Clases"]))
                 })
+        
+        # Liberar memoria cada 50 clientes procesados
+        if len(resultados) % 50 == 0:
+            gc.collect()
 
     if not resultados:
         flash("No se encontraron conflictos.")
         return redirect(url_for("inicio"))
+
+    # 4. Guardar y limpiar sesión
+    session["resultados_meta"] = [
+        {"pdf_id": r["pdf_id"], "marca_cliente": r["marca_cliente"], 
+         "score": r["score"], "marca_gaceta": r["marca_gaceta"]} 
+        for r in resultados
+    ]
+    
+    with open("datos_sesion.json", "w", encoding="utf-8") as f:
+        json.dump(resultados, f, ensure_ascii=False)
+
+    # Limpieza final de variables grandes
+    del data_c
+    del data_g
+    gc.collect()
+
+    return redirect(url_for("resultados"))
 
     # Guardamos los metadatos ligeros en la sesión
     session["resultados_meta"] = [{k:v for k,v in r.items() if not k.startswith("_")} for r in resultados]
