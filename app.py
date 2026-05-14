@@ -409,11 +409,12 @@ def procesar():
         return redirect(url_for("inicio"))
 
     resultados = []
-    for _, c in df_c.iterrows():
-        if not c["Marca_Limpia"]: continue
+    # Filtrar vacíos antes del loop para reducir memoria
+df_c = df_c[df_c["Marca_Limpia"].str.len() > 0].reset_index(drop=True)
+df_g = df_g[df_g["Marca_Limpia"].str.len() > 0].reset_index(drop=True)
+
+for _, c in df_c.iterrows():
         for _, g in df_g.iterrows():
-            if not g["Marca_Limpia"]: continue
-            score = calcular_similitud(c["Marca_Limpia"], g["Marca_Limpia"])
             if score < UMBRAL_CORTE: continue
             clases_c = c.get("Clases", set()) or set()
             clases_g = g.get("Clases", set()) or set()
