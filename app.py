@@ -297,6 +297,54 @@ def procesar():
         flash("Faltan archivos")
         return redirect(url_for("inicio"))
 
+    # Limpiar archivos temporales de sesiones anteriores para ahorrar espacio
+    for folder in [PDF_FOLDER, CARPETA_IMG]:
+        for f in os.listdir(folder):
+            try: os.remove(os.path.join(folder, f))
+            except: pass
+
+    data_c = leer_excel_sin_pandas(file_c.read(), CARPETA_IMG)
+    data_g = leer_excel_sin_pandas(file_g.read(), CARPETA_IMG)
+
+    resultados = []
+    for c in data_c:
+        for g in data_g:
+            score = calcular_similitud(c["Marca_Limpia"], g["Marca_Limpia"])
+            
+            # FILTRO DE MEMORIA: Solo guardamos datos, NO generamos PDFs aquí
+            if score >= UMBRAL_CORTE and clases_en_conflicto(c["Clases"], g["Clases"]):
+                p_id = f"{limpiar_id(c['Marca_Original'])}_vs_{limpiar_id(g['Marca_Original'])}"
+                
+                c_json = c.copy(); c_json["Clases"] = list(c["Clases"])
+                g_json = g.copy(); g_json["Clases"] = list(g["Clases"])
+
+                resultados.append({
+                    "pdf_id": p_id,
+                    "exp_cliente": c["Expediente_ID"],
+                    "marca_cliente": c["Marca_Original"],
+                    "score": score,
+                    "exp_gaceta": g["Expediente_ID"],
+                    "marca_gaceta": g["Marca_Original"],
+                    "clases_c": str(list(c["Clases"])),
+                    "clases_g": str(list(g["Clases"])),
+                    "_full_c": c_json,
+                    "_full_g": g_json,
+                    "_clases_conf": list(calcular_clases_conflicto(c["Clases"], g["Clases"]))
+                })
+
+    if not resultados:
+        flash("No se encontraron conflictos.")
+        return redirect(url_for("inicio"))
+
+    # Guardamos los metadatos ligeros en la sesión
+    session["resultados_meta"] = [{k:v for k,v in r.items() if not k.startswith("_")} for r in resultados]
+    
+    # Guardamos los datos pesados (logos y diccionarios completos) en un archivo temporal
+    with open("datos_sesion.json", "w", encoding="utf-8") as f:
+        json.dump(resultados, f, ensure_ascii=False)
+
+    return redirect(url_for("resultados"))
+
     # Limpiar procesos anteriores
     for folder in [PDF_FOLDER, CARPETA_IMG]:
         for f in os.listdir(folder):
@@ -362,6 +410,15 @@ def guardar_concepto():
     with open("datos_sesion.json", "r", encoding="utf-8") as f:
         todos = json.load(f)
     
+    for item in todos:
+        if item["pdf_id"] == p_id:
+            item["concepto"] = concepto # Guardamos el concepto en el JSON
+            break
+            
+    with open("datos_sesion.json", "w", encoding="utf-8") as f:
+        json.dump(todos, f, ensure_ascii=False)
+        
+    return jsonify({"ok": True})
     item = next((x for x in todos if x["pdf_id"] == p_id), None)
     if item:
         generar_pdf(item["_full_c"], item["_full_g"], item["score"], 
@@ -373,7 +430,31 @@ def guardar_concepto():
 @app.route("/descargar_pdf/<pdf_id>")
 @login_requerido
 def descargar_pdf(pdf_id):
-    return send_file(os.path.join(PDF_FOLDER, f"{pdf_id}.pdf"), as_attachment=True)
+    # Intentamos cargar los datos guardados en el archivo temporal
+    try:
+        with open("datos_sesion.json", "r", encoding="utf-8") as f:
+            todos = json.load(f)
+    except:
+        return "Sesión expirada o archivos no encontrados. Por favor procesa de nuevo.", 404
+    
+    # Buscamos la coincidencia específica
+    item = next((x for x in todos if x["pdf_id"] == pdf_id), None)
+    if not item:
+        return "No se encontraron datos para este PDF.", 404
+
+    ruta_salida = os.path.join(PDF_FOLDER, f"{pdf_id}.pdf")
+    
+    # GENERACIÓN BAJO DEMANDA: Solo procesamos este PDF individual
+    generar_pdf(
+        item["_full_c"], 
+        item["_full_g"], 
+        item["score"], 
+        set(item["_clases_conf"]), 
+        concepto=item.get("concepto", ""),
+        ruta_pdf=ruta_salida
+    )
+    
+    return send_file(ruta_salida, as_attachment=True)
 
 @app.route("/descargar_excel")
 @login_requerido
