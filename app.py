@@ -292,6 +292,8 @@ import gc # Importante para liberar RAM manualmente
 
 # ... (Manten tus imports y utilidades de limpieza)
 
+import gc
+
 @app.route("/procesar", methods=["POST"])
 @login_requerido
 def procesar():
@@ -302,20 +304,103 @@ def procesar():
         flash("Faltan archivos")
         return redirect(url_for("inicio"))
 
-    # 1. Limpieza de disco inmediata
+    # 1. Limpiar carpetas
     for folder in [CARPETA_IMG, PDF_FOLDER]:
         for f in os.listdir(folder):
             try: os.remove(os.path.join(folder, f))
             except: pass
 
-    # 2. Leer archivos (Ahora los cargamos una sola vez)
-    # Usamos una estructura más compacta para ahorrar RAM
-    data_c = leer_excel_sin_pandas(file_c.read(), CARPETA_IMG)
-    data_g = leer_excel_sin_pandas(file_g.read(), CARPETA_IMG)
-    
-    gc.collect() # Liberar RAM tras leer Excels
+    # Guardar archivos temporalmente en disco para leerlos fila por fila
+    path_c = os.path.join(UPLOAD_FOLDER, "clientes.xlsx")
+    path_g = os.path.join(UPLOAD_FOLDER, "gaceta.xlsx")
+    file_c.save(path_c)
+    file_g.save(path_g)
+
+    def iterar_excel(path):
+        """Generador que lee el excel fila por fila sin cargar todo a RAM"""
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        sheet = wb.active
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not row or len(row) < 2 or not row[1]: continue
+            marca_orig = str(row[1])
+            marca_limp = limpiar(marca_orig)
+            if not marca_limp: continue
+            
+            yield {
+                "Expediente_ID": str(row[0]),
+                "Marca_Original": marca_orig,
+                "Marca_Limpia": marca_limp,
+                "Clases": extraer_clases(row[8]) if len(row) > 8 else set(),
+                "Titular": str(row[7]) if len(row) > 7 else "",
+                "Productos_Texto": str(row[10]) if len(row) > 10 else ""
+            }
+        wb.close()
 
     resultados = []
+    
+    # 2. PROCESAMIENTO SECUENCIAL (MARCA POR MARCA)
+    # Leemos clientes uno por uno
+    for c in iterar_excel(path_c):
+        clases_c = c["Clases"]
+        m_c = c["Marca_Limpia"]
+
+        # Por cada cliente, abrimos y recorremos la gaceta
+        # Esto es más lento pero usa CASI CERO RAM
+        for g in iterar_excel(path_g):
+            if clases_en_conflicto(clases_c, g["Clases"]):
+                score = calcular_similitud(m_c, g["Marca_Limpia"])
+                
+                if score >= UMBRAL_CORTE:
+                    p_id = f"{limpiar_id(c['Marca_Original'])}_vs_{limpiar_id(g['Marca_Original'])}"
+                    
+                    resultados.append({
+                        "pdf_id": p_id,
+                        "marca_cliente": c["Marca_Original"],
+                        "score": score,
+                        "marca_gaceta": g["Marca_Original"],
+                        "_full_c": {k: (list(v) if isinstance(v, set) else v) for k, v in c.items()},
+                        "_full_g": {k: (list(v) if isinstance(v, set) else v) for k, v in g.items()},
+                        "_clases_conf": list(calcular_clases_conflicto(clases_c, g["Clases"]))
+                    })
+        
+        # Limpieza manual después de procesar cada cliente
+        gc.collect()
+
+    # 3. EXTRAER LOGOS SOLO DE LOS RESULTADOS (Para ahorrar RAM)
+    if resultados:
+        # Abrimos los excels una última vez solo para sacar las fotos de los que sí cruzaron
+        def extraer_logos_finales(path, ids_necesarios):
+            wb = openpyxl.load_workbook(path, data_only=True)
+            sheet = wb.active
+            if hasattr(sheet, '_images'):
+                for img in sheet._images:
+                    row_idx = img.anchor._from.row + 1
+                    exp_id = str(sheet.cell(row=row_idx, column=1).value)
+                    if exp_id in ids_necesarios:
+                        ruta = os.path.join(CARPETA_IMG, f"{limpiar_id(exp_id)}.png")
+                        with open(ruta, "wb") as f: f.write(img._data())
+            wb.close()
+
+        ids_c = {r["_full_c"]["Expediente_ID"] for r in resultados}
+        ids_g = {r["_full_g"]["Expediente_ID"] for r in resultados}
+        extraer_logos_finales(path_c, ids_c)
+        extraer_logos_finales(path_g, ids_g)
+
+    # 4. Finalizar
+    if not resultados:
+        flash("No se encontraron conflictos.")
+        return redirect(url_for("inicio"))
+
+    session["resultados_meta"] = [
+        {"pdf_id": r["pdf_id"], "marca_cliente": r["marca_cliente"], 
+         "score": r["score"], "marca_gaceta": r["marca_gaceta"]} 
+        for r in resultados
+    ]
+    
+    with open("datos_sesion.json", "w", encoding="utf-8") as f:
+        json.dump(resultados, f, ensure_ascii=False)
+
+    return redirect(url_for("resultados"))
     
     # 3. Comparación Optimizada
     for c in data_c:
